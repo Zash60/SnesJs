@@ -23,7 +23,7 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    # CORREÇÃO: Força Gradle 8.5 para evitar o erro "HasConvention"
+    # Força Gradle 8.5 para evitar erros de compatibilidade
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
       with:
@@ -45,7 +45,14 @@ jobs:
         # 3. Mover assets
         cp -r web_assets/* app/src/main/assets/
         
-        # 4. Criar settings.gradle
+        # 4. Criar gradle.properties (CORREÇÃO DO ERRO ANDROIDX)
+        cat <<EOF > gradle.properties
+        android.useAndroidX=true
+        android.enableJetifier=true
+        org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+        EOF
+
+        # 5. Criar settings.gradle
         cat <<EOF > settings.gradle
         pluginManagement {
             repositories {
@@ -65,7 +72,7 @@ jobs:
         include ':app'
         EOF
 
-        # 5. Criar build.gradle (Raiz)
+        # 6. Criar build.gradle (Raiz)
         cat <<EOF > build.gradle
         plugins {
             id 'com.android.application' version '8.2.0' apply false
@@ -73,7 +80,7 @@ jobs:
         }
         EOF
 
-        # 6. Criar build.gradle (App)
+        # 7. Criar build.gradle (App)
         cat <<EOF > app/build.gradle
         plugins {
             id 'com.android.application'
@@ -115,14 +122,14 @@ jobs:
         }
         EOF
 
-        # 7. Criar strings.xml
+        # 8. Criar strings.xml
         cat <<EOF > app/src/main/res/values/strings.xml
         <resources>
             <string name="app_name">SnesJS</string>
         </resources>
         EOF
 
-        # 8. Criar AndroidManifest.xml
+        # 9. Criar AndroidManifest.xml
         cat <<EOF > app/src/main/AndroidManifest.xml
         <?xml version="1.0" encoding="utf-8"?>
         <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -148,7 +155,7 @@ jobs:
         </manifest>
         EOF
 
-        # 9. Layout XML
+        # 10. Layout XML
         cat <<EOF > app/src/main/res/layout/activity_main.xml
         <?xml version="1.0" encoding="utf-8"?>
         <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -212,7 +219,7 @@ jobs:
         </androidx.constraintlayout.widget.ConstraintLayout>
         EOF
 
-        # 10. MainActivity.kt
+        # 11. MainActivity.kt
         cat <<EOF > app/src/main/java/com/snesjs/MainActivity.kt
         package com.snesjs
 
@@ -280,7 +287,6 @@ jobs:
     - name: Build APK
       run: gradle assembleDebug --no-daemon
 
-    # PASSO NOVO: Commit e Push do APK para o repositório
     - name: Commit and Push APK
       run: |
         # 1. Configurar Git
@@ -290,8 +296,7 @@ jobs:
         # 2. Salvar o APK gerado em um local temporário seguro
         cp app/build/outputs/apk/debug/app-debug.apk /tmp/snesjs.apk
         
-        # 3. Restaurar o repositório para o estado limpo (desfazer as mudanças de pastas do scaffold)
-        # Isso é crucial para não comitar toda a estrutura Android gerada dinamicamente
+        # 3. Restaurar o repositório (crucial para não commitar o código Android gerado)
         git reset --hard
         git clean -fd
         
@@ -301,7 +306,6 @@ jobs:
         # 5. Adicionar o APK ao Git
         git add snesjs.apk
         
-        # 6. Comitar e Enviar
-        # [skip ci] é usado para não disparar este workflow novamente e entrar em loop infinito
+        # 6. Comitar e Enviar (com [skip ci] para evitar loop)
         git commit -m "Auto-build: Update snesjs.apk [skip ci]" || echo "No changes to commit"
         git push
