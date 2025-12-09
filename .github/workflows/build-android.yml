@@ -5,7 +5,7 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
-# Permissão necessária para o Workflow fazer commit e push no seu repositório
+# Permissão para comitar o APK de volta no repositório
 permissions:
   contents: write
 
@@ -23,7 +23,7 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    # Força Gradle 8.5 para evitar erros de compatibilidade
+    # Usa Gradle 8.5 para compatibilidade e estabilidade
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
       with:
@@ -33,7 +33,7 @@ jobs:
       run: |
         # 1. Preparar pastas
         mkdir -p web_assets
-        # Move arquivos web para pasta temp (mantendo .git e workflows intactos)
+        # Move arquivos web para pasta temp, protegendo .git e .github
         find . -maxdepth 1 -not -name 'web_assets' -not -name '.git' -not -name '.github' -not -name '.' -exec mv {} web_assets/ \;
 
         # 2. Criar estrutura Android
@@ -42,10 +42,10 @@ jobs:
         mkdir -p app/src/main/res/values
         mkdir -p app/src/main/assets
         
-        # 3. Mover assets
+        # 3. Mover assets web
         cp -r web_assets/* app/src/main/assets/
         
-        # 4. Criar gradle.properties (CORREÇÃO DO ERRO ANDROIDX)
+        # 4. Criar gradle.properties (Corrige erro do AndroidX)
         cat <<EOF > gradle.properties
         android.useAndroidX=true
         android.enableJetifier=true
@@ -129,7 +129,7 @@ jobs:
         </resources>
         EOF
 
-        # 9. Criar AndroidManifest.xml
+        # 9. Criar AndroidManifest.xml (CORREÇÃO: Usar ícone padrão do Android)
         cat <<EOF > app/src/main/AndroidManifest.xml
         <?xml version="1.0" encoding="utf-8"?>
         <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -138,7 +138,7 @@ jobs:
             
             <application
                 android:allowBackup="true"
-                android:icon="@mipmap/ic_launcher"
+                android:icon="@android:drawable/sym_def_app_icon"
                 android:label="@string/app_name"
                 android:supportsRtl="true"
                 android:theme="@style/Theme.AppCompat.NoActionBar">
@@ -251,6 +251,7 @@ jobs:
                 webView.webChromeClient = WebChromeClient()
                 webView.webViewClient = WebViewClient()
 
+                // Carrega o arquivo local
                 webView.loadUrl("file:///android_asset/index.html")
 
                 setupButton(R.id.btnB, 0)
@@ -289,23 +290,21 @@ jobs:
 
     - name: Commit and Push APK
       run: |
-        # 1. Configurar Git
+        # Configurar Git
         git config --global user.name "GitHub Actions"
         git config --global user.email "actions@github.com"
         
-        # 2. Salvar o APK gerado em um local temporário seguro
+        # Salvar o APK gerado
         cp app/build/outputs/apk/debug/app-debug.apk /tmp/snesjs.apk
         
-        # 3. Restaurar o repositório (crucial para não commitar o código Android gerado)
+        # Limpar o repositório (remove código Android gerado dinamicamente)
         git reset --hard
         git clean -fd
         
-        # 4. Trazer o APK de volta para a raiz
+        # Recuperar o APK
         mv /tmp/snesjs.apk snesjs.apk
         
-        # 5. Adicionar o APK ao Git
+        # Adicionar, Commitar e Enviar
         git add snesjs.apk
-        
-        # 6. Comitar e Enviar (com [skip ci] para evitar loop)
         git commit -m "Auto-build: Update snesjs.apk [skip ci]" || echo "No changes to commit"
         git push
