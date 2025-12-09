@@ -1,0 +1,271 @@
+name: Build SnesJS Android APK
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Web Source Code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Scaffold Android Project Structure
+      run: |
+        # 1. Preparar pastas temporárias para os arquivos web
+        mkdir -p web_assets
+        # Movemos tudo que não é o próprio web_assets e arquivos ocultos para lá
+        find . -maxdepth 1 -not -name 'web_assets' -not -name '.git' -not -name '.github' -not -name '.' -exec mv {} web_assets/ \;
+
+        # 2. Criar estrutura de pastas do Android
+        mkdir -p app/src/main/java/com/snesjs
+        mkdir -p app/src/main/res/layout
+        mkdir -p app/src/main/assets
+        
+        # 3. Mover os arquivos web para a pasta assets do Android
+        cp -r web_assets/* app/src/main/assets/
+        
+        # 4. Criar settings.gradle
+        cat <<EOF > settings.gradle
+        pluginManagement {
+            repositories {
+                google()
+                mavenCentral()
+                gradlePluginPortal()
+            }
+        }
+        dependencyResolutionManagement {
+            repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+            repositories {
+                google()
+                mavenCentral()
+            }
+        }
+        rootProject.name = "SnesJsAndroid"
+        include ':app'
+        EOF
+
+        # 5. Criar build.gradle (Raiz)
+        cat <<EOF > build.gradle
+        plugins {
+            id 'com.android.application' version '8.2.0' apply false
+            id 'org.jetbrains.kotlin.android' version '1.9.20' apply false
+        }
+        EOF
+
+        # 6. Criar build.gradle (App)
+        cat <<EOF > app/build.gradle
+        plugins {
+            id 'com.android.application'
+            id 'org.jetbrains.kotlin.android'
+        }
+
+        android {
+            namespace 'com.snesjs'
+            compileSdk 34
+
+            defaultConfig {
+                applicationId "com.snesjs.emulator"
+                minSdk 24
+                targetSdk 34
+                versionCode 1
+                versionName "1.0"
+            }
+
+            buildTypes {
+                release {
+                    minifyEnabled false
+                    proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+                }
+            }
+            compileOptions {
+                sourceCompatibility JavaVersion.VERSION_1_8
+                targetCompatibility JavaVersion.VERSION_1_8
+            }
+            kotlinOptions {
+                jvmTarget = '1.8'
+            }
+        }
+
+        dependencies {
+            implementation 'androidx.core:core-ktx:1.12.0'
+            implementation 'androidx.appcompat:appcompat:1.6.1'
+            implementation 'com.google.android.material:material:1.11.0'
+            implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+        }
+        EOF
+
+        # 7. Criar AndroidManifest.xml
+        cat <<EOF > app/src/main/AndroidManifest.xml
+        <?xml version="1.0" encoding="utf-8"?>
+        <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+            <uses-permission android:name="android.permission.INTERNET" />
+            <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+            
+            <application
+                android:allowBackup="true"
+                android:icon="@mipmap/ic_launcher"
+                android:label="SnesJS"
+                android:supportsRtl="true"
+                android:theme="@style/Theme.AppCompat.NoActionBar">
+                <activity
+                    android:name=".MainActivity"
+                    android:exported="true"
+                    android:screenOrientation="portrait">
+                    <intent-filter>
+                        <action android:name="android.intent.action.MAIN" />
+                        <category android:name="android.intent.category.LAUNCHER" />
+                    </intent-filter>
+                </activity>
+            </application>
+        </manifest>
+        EOF
+
+        # 8. Criar o Layout XML (Com controles virtuais)
+        cat <<EOF > app/src/main/res/layout/activity_main.xml
+        <?xml version="1.0" encoding="utf-8"?>
+        <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+            xmlns:app="http://schemas.android.com/apk/res-auto"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#202020">
+
+            <WebView
+                android:id="@+id/webView"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                app:layout_constraintHeight_percent="0.6"
+                app:layout_constraintTop_toTopOf="parent" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:orientation="horizontal"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/webView">
+
+                <!-- D-PAD -->
+                <GridLayout
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:columnCount="3"
+                    android:rowCount="3"
+                    android:alignmentMode="alignBounds"
+                    android:padding="10dp">
+                    
+                    <Button android:id="@+id/btnUp" android:text="▲" android:layout_row="0" android:layout_column="1" android:layout_gravity="fill"/>
+                    <Button android:id="@+id/btnLeft" android:text="◄" android:layout_row="1" android:layout_column="0" android:layout_gravity="fill"/>
+                    <Button android:id="@+id/btnRight" android:text="►" android:layout_row="1" android:layout_column="2" android:layout_gravity="fill"/>
+                    <Button android:id="@+id/btnDown" android:text="▼" android:layout_row="2" android:layout_column="1" android:layout_gravity="fill"/>
+                </GridLayout>
+
+                <!-- Actions -->
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:orientation="vertical">
+                    
+                    <LinearLayout android:orientation="horizontal" android:layout_width="wrap_content" android:layout_height="wrap_content">
+                        <Button android:id="@+id/btnY" android:text="Y" />
+                        <Button android:id="@+id/btnX" android:text="X" />
+                    </LinearLayout>
+                    <LinearLayout android:orientation="horizontal" android:layout_width="wrap_content" android:layout_height="wrap_content">
+                        <Button android:id="@+id/btnB" android:text="B" />
+                        <Button android:id="@+id/btnA" android:text="A" />
+                    </LinearLayout>
+                    <LinearLayout android:orientation="horizontal" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="20dp">
+                        <Button android:id="@+id/btnSelect" android:text="Sel" android:textSize="10sp"/>
+                        <Button android:id="@+id/btnStart" android:text="Start" android:textSize="10sp"/>
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+        </androidx.constraintlayout.widget.ConstraintLayout>
+        EOF
+
+        # 9. Criar MainActivity.kt
+        cat <<EOF > app/src/main/java/com/snesjs/MainActivity.kt
+        package com.snesjs
+
+        import android.annotation.SuppressLint
+        import android.os.Bundle
+        import android.view.MotionEvent
+        import android.webkit.WebChromeClient
+        import android.webkit.WebView
+        import android.webkit.WebViewClient
+        import androidx.appcompat.app.AppCompatActivity
+        import android.widget.Button
+
+        class MainActivity : AppCompatActivity() {
+            private lateinit var webView: WebView
+
+            @SuppressLint("SetJavaScriptEnabled")
+            override fun onCreate(savedInstanceState: Bundle?) {
+                super.onCreate(savedInstanceState)
+                setContentView(R.layout.activity_main)
+
+                webView = findViewById(R.id.webView)
+                webView.settings.javaScriptEnabled = true
+                webView.settings.domStorageEnabled = true
+                webView.settings.allowFileAccess = true
+                webView.settings.allowContentAccess = true
+                webView.settings.useWideViewPort = true
+                webView.settings.loadWithOverviewMode = true
+                
+                webView.webChromeClient = WebChromeClient()
+                webView.webViewClient = WebViewClient()
+
+                webView.loadUrl("file:///android_asset/index.html")
+
+                // Mapeamento dos botoes (IDs baseados no js/main.js)
+                // z:0(B), a:1(Y), shift:2(sel), enter:3(start), up:4, down:5, left:6, right:7, x:8(A), s:9(X)
+                setupButton(R.id.btnB, 0)
+                setupButton(R.id.btnY, 1)
+                setupButton(R.id.btnSelect, 2)
+                setupButton(R.id.btnStart, 3)
+                setupButton(R.id.btnUp, 4)
+                setupButton(R.id.btnDown, 5)
+                setupButton(R.id.btnLeft, 6)
+                setupButton(R.id.btnRight, 7)
+                setupButton(R.id.btnA, 8)
+                setupButton(R.id.btnX, 9)
+            }
+
+            @SuppressLint("ClickableViewAccessibility")
+            private fun setupButton(resId: Int, keyId: Int) {
+                findViewById<Button>(resId).setOnTouchListener { _, event ->
+                    when (event.action) {
+                        MotionEvent.ACTION_DOWN -> {
+                            webView.evaluateJavascript("snes.setPad1ButtonPressed(\$keyId);", null)
+                            true
+                        }
+                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                            webView.evaluateJavascript("snes.setPad1ButtonReleased(\$keyId);", null)
+                            true
+                        }
+                        else -> false
+                    }
+                }
+            }
+        }
+        EOF
+
+    - name: Build APK with Gradle
+      run: gradle assembleDebug --no-daemon
+
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: snesjs-apk
+        path: app/build/outputs/apk/debug/app-debug.apk
