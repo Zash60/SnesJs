@@ -42,21 +42,46 @@ jobs:
         # 3. Mover os arquivos do emulador para assets
         cp -r web_assets/* app/src/main/assets/
 
-        # --- CORREÇÃO 1: AJUSTAR HTML PARA CELULAR (VIEWPORT) ---
-        # Injeta a meta tag viewport logo após o <head>
+        # --- CORREÇÃO 1: AJUSTE DE TELA (VIEWPORT E CSS) ---
+        # Injeta meta tag viewport para ajustar ao celular
         sed -i 's/<head>/<head><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">/g' app/src/main/assets/index.html
 
-        # --- CORREÇÃO 2: AUMENTAR BOTÕES HTML (CSS) ---
-        # Adiciona CSS no final do arquivo para botões grandes
+        # CSS para forçar o canvas a caber na tela e melhorar visual
         cat <<EOF >> app/src/main/assets/style.css
         
-        /* Ajustes para Mobile inseridos pelo Build */
-        input[type="file"], button, input[type="checkbox"] {
-            transform: scale(1.5);
-            margin: 10px;
-            padding: 10px;
+        /* Ajustes Mobile Otimizados */
+        body {
+            margin: 0;
+            padding: 5px;
+            overflow-x: hidden;
+            background-color: #f0f0f0;
+            width: 100vw;
+            box-sizing: border-box;
         }
-        #log { display: none; } /* Esconde o log para dar espaço */
+        
+        /* Força o jogo a caber na largura da tela */
+        #output {
+            width: 100% !important;
+            height: auto !important;
+            max-width: 100%;
+            aspect-ratio: 256/224; /* Mantém proporção do SNES */
+            background: #000;
+            display: block;
+            margin: 0 auto;
+        }
+
+        /* Esconde o log que ocupa espaço e gasta processamento */
+        #log { display: none; }
+
+        /* Ajusta os botões HTML para não serem gigantes */
+        input, button, select {
+            font-size: 14px;
+            padding: 8px;
+            margin: 2px;
+            max-width: 95%;
+        }
+        
+        /* Remove seleção de texto acidental */
         body { -webkit-user-select: none; user-select: none; }
         EOF
         
@@ -110,14 +135,18 @@ jobs:
                 applicationId "com.snesjs.emulator"
                 minSdk 24
                 targetSdk 34
-                versionCode 1
-                versionName "1.0"
+                versionCode 2
+                versionName "1.1"
             }
 
             buildTypes {
                 release {
-                    minifyEnabled false
+                    minifyEnabled true
+                    shrinkResources true
                     proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+                }
+                debug {
+                    minifyEnabled false
                 }
             }
             compileOptions {
@@ -145,7 +174,7 @@ jobs:
         </resources>
         EOF
 
-        # 9. AndroidManifest.xml
+        # 9. AndroidManifest.xml (CORREÇÃO 2: Aceleração de Hardware Ativada)
         cat <<EOF > app/src/main/AndroidManifest.xml
         <?xml version="1.0" encoding="utf-8"?>
         <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -156,6 +185,8 @@ jobs:
                 android:allowBackup="true"
                 android:icon="@android:drawable/sym_def_app_icon"
                 android:label="@string/app_name"
+                android:hardwareAccelerated="true"
+                android:largeHeap="true"
                 android:supportsRtl="true"
                 android:theme="@style/Theme.AppCompat.NoActionBar">
                 <activity
@@ -260,7 +291,7 @@ jobs:
         </androidx.constraintlayout.widget.ConstraintLayout>
         EOF
 
-        # 11. MainActivity.kt (CORREÇÃO 3: LÓGICA DO FILE CHOOSER)
+        # 11. MainActivity.kt (CORREÇÃO 3: Lógica de Arquivo e Performance)
         cat <<EOF > app/src/main/java/com/snesjs/MainActivity.kt
         package com.snesjs
 
@@ -268,8 +299,10 @@ jobs:
         import android.net.Uri
         import android.os.Bundle
         import android.view.MotionEvent
+        import android.view.View
         import android.webkit.ValueCallback
         import android.webkit.WebChromeClient
+        import android.webkit.WebSettings
         import android.webkit.WebView
         import android.webkit.WebViewClient
         import androidx.activity.result.contract.ActivityResultContracts
@@ -279,10 +312,8 @@ jobs:
         class MainActivity : AppCompatActivity() {
             private lateinit var webView: WebView
             
-            // Variável para armazenar o callback do upload de arquivo
             private var uploadMessage: ValueCallback<Array<Uri>>? = null
 
-            // Lançador de atividade para escolher arquivos
             private val fileChooserLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
                 if (uploadMessage == null) return@registerForActivityResult
                 
@@ -297,31 +328,37 @@ jobs:
                 setContentView(R.layout.activity_main)
 
                 webView = findViewById(R.id.webView)
-                webView.settings.javaScriptEnabled = true
-                webView.settings.domStorageEnabled = true
-                webView.settings.allowFileAccess = true
-                webView.settings.allowContentAccess = true
-                webView.settings.useWideViewPort = true
-                webView.settings.loadWithOverviewMode = true
-                webView.settings.mediaPlaybackRequiresUserGesture = false
+                
+                // Configurações de Performance e Funcionalidade
+                webView.settings.apply {
+                    javaScriptEnabled = true
+                    domStorageEnabled = true
+                    allowFileAccess = true
+                    allowContentAccess = true
+                    useWideViewPort = true
+                    loadWithOverviewMode = true
+                    mediaPlaybackRequiresUserGesture = false
+                    // Melhora performance
+                    cacheMode = WebSettings.LOAD_NO_CACHE 
+                    setRenderPriority(WebSettings.RenderPriority.HIGH)
+                }
+                
+                // Forçar aceleração de hardware na View
+                webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
                 
                 webView.webViewClient = WebViewClient()
                 
-                // Configuração crítica para abrir o seletor de arquivos
                 webView.webChromeClient = object : WebChromeClient() {
                     override fun onShowFileChooser(
                         webView: WebView?,
                         filePathCallback: ValueCallback<Array<Uri>>?,
                         fileChooserParams: FileChooserParams?
                     ): Boolean {
-                        // Cancela callback anterior se existir
                         if (uploadMessage != null) {
                             uploadMessage?.onReceiveValue(null)
                             uploadMessage = null
                         }
-
                         uploadMessage = filePathCallback
-
                         val intent = fileChooserParams?.createIntent()
                         try {
                             fileChooserLauncher.launch(intent)
@@ -333,10 +370,9 @@ jobs:
                     }
                 }
 
-                // Carrega o arquivo local
                 webView.loadUrl("file:///android_asset/index.html")
 
-                // Mapeia botões
+                // Mapeamento
                 setupButton(R.id.btnB, 0)
                 setupButton(R.id.btnY, 1)
                 setupButton(R.id.btnSelect, 2)
@@ -389,5 +425,5 @@ jobs:
         # Traz o APK de volta e commita
         mv /tmp/snesjs.apk snesjs.apk
         git add snesjs.apk
-        git commit -m "Auto-build: Fix file chooser and viewport [skip ci]" || echo "No changes"
+        git commit -m "Auto-build: Fix size and performance [skip ci]" || echo "No changes"
         git push
