@@ -5,6 +5,10 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+# Permissão necessária para o Workflow fazer commit e push no seu repositório
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -19,19 +23,26 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
+    # CORREÇÃO: Força Gradle 8.5 para evitar o erro "HasConvention"
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v3
+      with:
+        gradle-version: '8.5'
+
     - name: Scaffold Android Project Structure
       run: |
-        # 1. Preparar pastas temporárias para os arquivos web
+        # 1. Preparar pastas
         mkdir -p web_assets
-        # Movemos tudo que não é o próprio web_assets e arquivos ocultos para lá
+        # Move arquivos web para pasta temp (mantendo .git e workflows intactos)
         find . -maxdepth 1 -not -name 'web_assets' -not -name '.git' -not -name '.github' -not -name '.' -exec mv {} web_assets/ \;
 
-        # 2. Criar estrutura de pastas do Android
+        # 2. Criar estrutura Android
         mkdir -p app/src/main/java/com/snesjs
         mkdir -p app/src/main/res/layout
+        mkdir -p app/src/main/res/values
         mkdir -p app/src/main/assets
         
-        # 3. Mover os arquivos web para a pasta assets do Android
+        # 3. Mover assets
         cp -r web_assets/* app/src/main/assets/
         
         # 4. Criar settings.gradle
@@ -104,7 +115,14 @@ jobs:
         }
         EOF
 
-        # 7. Criar AndroidManifest.xml
+        # 7. Criar strings.xml
+        cat <<EOF > app/src/main/res/values/strings.xml
+        <resources>
+            <string name="app_name">SnesJS</string>
+        </resources>
+        EOF
+
+        # 8. Criar AndroidManifest.xml
         cat <<EOF > app/src/main/AndroidManifest.xml
         <?xml version="1.0" encoding="utf-8"?>
         <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -114,7 +132,7 @@ jobs:
             <application
                 android:allowBackup="true"
                 android:icon="@mipmap/ic_launcher"
-                android:label="SnesJS"
+                android:label="@string/app_name"
                 android:supportsRtl="true"
                 android:theme="@style/Theme.AppCompat.NoActionBar">
                 <activity
@@ -130,7 +148,7 @@ jobs:
         </manifest>
         EOF
 
-        # 8. Criar o Layout XML (Com controles virtuais)
+        # 9. Layout XML
         cat <<EOF > app/src/main/res/layout/activity_main.xml
         <?xml version="1.0" encoding="utf-8"?>
         <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -194,7 +212,7 @@ jobs:
         </androidx.constraintlayout.widget.ConstraintLayout>
         EOF
 
-        # 9. Criar MainActivity.kt
+        # 10. MainActivity.kt
         cat <<EOF > app/src/main/java/com/snesjs/MainActivity.kt
         package com.snesjs
 
@@ -228,8 +246,6 @@ jobs:
 
                 webView.loadUrl("file:///android_asset/index.html")
 
-                // Mapeamento dos botoes (IDs baseados no js/main.js)
-                // z:0(B), a:1(Y), shift:2(sel), enter:3(start), up:4, down:5, left:6, right:7, x:8(A), s:9(X)
                 setupButton(R.id.btnB, 0)
                 setupButton(R.id.btnY, 1)
                 setupButton(R.id.btnSelect, 2)
@@ -247,11 +263,11 @@ jobs:
                 findViewById<Button>(resId).setOnTouchListener { _, event ->
                     when (event.action) {
                         MotionEvent.ACTION_DOWN -> {
-                            webView.evaluateJavascript("snes.setPad1ButtonPressed(\$keyId);", null)
+                            webView.evaluateJavascript("if(typeof snes !== 'undefined') snes.setPad1ButtonPressed(\$keyId);", null)
                             true
                         }
                         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                            webView.evaluateJavascript("snes.setPad1ButtonReleased(\$keyId);", null)
+                            webView.evaluateJavascript("if(typeof snes !== 'undefined') snes.setPad1ButtonReleased(\$keyId);", null)
                             true
                         }
                         else -> false
@@ -261,11 +277,31 @@ jobs:
         }
         EOF
 
-    - name: Build APK with Gradle
+    - name: Build APK
       run: gradle assembleDebug --no-daemon
 
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: snesjs-apk
-        path: app/build/outputs/apk/debug/app-debug.apk
+    # PASSO NOVO: Commit e Push do APK para o repositório
+    - name: Commit and Push APK
+      run: |
+        # 1. Configurar Git
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
+        
+        # 2. Salvar o APK gerado em um local temporário seguro
+        cp app/build/outputs/apk/debug/app-debug.apk /tmp/snesjs.apk
+        
+        # 3. Restaurar o repositório para o estado limpo (desfazer as mudanças de pastas do scaffold)
+        # Isso é crucial para não comitar toda a estrutura Android gerada dinamicamente
+        git reset --hard
+        git clean -fd
+        
+        # 4. Trazer o APK de volta para a raiz
+        mv /tmp/snesjs.apk snesjs.apk
+        
+        # 5. Adicionar o APK ao Git
+        git add snesjs.apk
+        
+        # 6. Comitar e Enviar
+        # [skip ci] é usado para não disparar este workflow novamente e entrar em loop infinito
+        git commit -m "Auto-build: Update snesjs.apk [skip ci]" || echo "No changes to commit"
+        git push
