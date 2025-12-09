@@ -31,7 +31,6 @@ jobs:
       run: |
         # 1. Limpar e Preparar Pastas
         mkdir -p web_assets
-        # Move arquivos web para pasta temp (mantendo .git, .github e o próprio web_assets)
         find . -maxdepth 1 -not -name 'web_assets' -not -name '.git' -not -name '.github' -not -name '.' -exec mv {} web_assets/ \;
 
         # 2. Criar estrutura de pastas Android
@@ -42,8 +41,26 @@ jobs:
         
         # 3. Mover os arquivos do emulador para assets
         cp -r web_assets/* app/src/main/assets/
+
+        # --- CORREÇÃO 1: AJUSTAR HTML PARA CELULAR (VIEWPORT) ---
+        # Injeta a meta tag viewport logo após o <head>
+        sed -i 's/<head>/<head><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">/g' app/src/main/assets/index.html
+
+        # --- CORREÇÃO 2: AUMENTAR BOTÕES HTML (CSS) ---
+        # Adiciona CSS no final do arquivo para botões grandes
+        cat <<EOF >> app/src/main/assets/style.css
         
-        # 4. gradle.properties (Habilita AndroidX e Jetifier)
+        /* Ajustes para Mobile inseridos pelo Build */
+        input[type="file"], button, input[type="checkbox"] {
+            transform: scale(1.5);
+            margin: 10px;
+            padding: 10px;
+        }
+        #log { display: none; } /* Esconde o log para dar espaço */
+        body { -webkit-user-select: none; user-select: none; }
+        EOF
+        
+        # 4. gradle.properties
         cat <<EOF > gradle.properties
         android.useAndroidX=true
         android.enableJetifier=true
@@ -117,6 +134,7 @@ jobs:
             implementation 'androidx.appcompat:appcompat:1.6.1'
             implementation 'com.google.android.material:material:1.11.0'
             implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+            implementation 'androidx.activity:activity-ktx:1.8.2'
         }
         EOF
 
@@ -127,7 +145,7 @@ jobs:
         </resources>
         EOF
 
-        # 9. AndroidManifest.xml (Usando ícone padrão para evitar erro de resource)
+        # 9. AndroidManifest.xml
         cat <<EOF > app/src/main/AndroidManifest.xml
         <?xml version="1.0" encoding="utf-8"?>
         <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -144,6 +162,7 @@ jobs:
                     android:name=".MainActivity"
                     android:exported="true"
                     android:screenOrientation="portrait"
+                    android:configChanges="orientation|screenSize|keyboardHidden"
                     android:windowSoftInputMode="adjustResize">
                     <intent-filter>
                         <action android:name="android.intent.action.MAIN" />
@@ -154,7 +173,7 @@ jobs:
         </manifest>
         EOF
 
-        # 10. Layout XML (CORRIGIDO: Todos os botões agora têm width e height)
+        # 10. Layout XML
         cat <<EOF > app/src/main/res/layout/activity_main.xml
         <?xml version="1.0" encoding="utf-8"?>
         <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -167,7 +186,7 @@ jobs:
                 android:id="@+id/webView"
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
-                app:layout_constraintHeight_percent="0.65"
+                app:layout_constraintHeight_percent="0.60"
                 app:layout_constraintTop_toTopOf="parent" />
 
             <LinearLayout
@@ -241,21 +260,36 @@ jobs:
         </androidx.constraintlayout.widget.ConstraintLayout>
         EOF
 
-        # 11. MainActivity.kt (Lógica)
+        # 11. MainActivity.kt (CORREÇÃO 3: LÓGICA DO FILE CHOOSER)
         cat <<EOF > app/src/main/java/com/snesjs/MainActivity.kt
         package com.snesjs
 
         import android.annotation.SuppressLint
+        import android.net.Uri
         import android.os.Bundle
         import android.view.MotionEvent
+        import android.webkit.ValueCallback
         import android.webkit.WebChromeClient
         import android.webkit.WebView
         import android.webkit.WebViewClient
+        import androidx.activity.result.contract.ActivityResultContracts
         import androidx.appcompat.app.AppCompatActivity
         import android.widget.Button
 
         class MainActivity : AppCompatActivity() {
             private lateinit var webView: WebView
+            
+            // Variável para armazenar o callback do upload de arquivo
+            private var uploadMessage: ValueCallback<Array<Uri>>? = null
+
+            // Lançador de atividade para escolher arquivos
+            private val fileChooserLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+                if (uploadMessage == null) return@registerForActivityResult
+                
+                val results = WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
+                uploadMessage?.onReceiveValue(results)
+                uploadMessage = null
+            }
 
             @SuppressLint("SetJavaScriptEnabled")
             override fun onCreate(savedInstanceState: Bundle?) {
@@ -271,13 +305,38 @@ jobs:
                 webView.settings.loadWithOverviewMode = true
                 webView.settings.mediaPlaybackRequiresUserGesture = false
                 
-                webView.webChromeClient = WebChromeClient()
                 webView.webViewClient = WebViewClient()
+                
+                // Configuração crítica para abrir o seletor de arquivos
+                webView.webChromeClient = object : WebChromeClient() {
+                    override fun onShowFileChooser(
+                        webView: WebView?,
+                        filePathCallback: ValueCallback<Array<Uri>>?,
+                        fileChooserParams: FileChooserParams?
+                    ): Boolean {
+                        // Cancela callback anterior se existir
+                        if (uploadMessage != null) {
+                            uploadMessage?.onReceiveValue(null)
+                            uploadMessage = null
+                        }
 
-                // Carrega o index.html dos assets
+                        uploadMessage = filePathCallback
+
+                        val intent = fileChooserParams?.createIntent()
+                        try {
+                            fileChooserLauncher.launch(intent)
+                        } catch (e: Exception) {
+                            uploadMessage = null
+                            return false
+                        }
+                        return true
+                    }
+                }
+
+                // Carrega o arquivo local
                 webView.loadUrl("file:///android_asset/index.html")
 
-                // Mapeia botões (z=B, a=Y, shift=Sel, enter=Start, x=A, s=X)
+                // Mapeia botões
                 setupButton(R.id.btnB, 0)
                 setupButton(R.id.btnY, 1)
                 setupButton(R.id.btnSelect, 2)
@@ -330,5 +389,5 @@ jobs:
         # Traz o APK de volta e commita
         mv /tmp/snesjs.apk snesjs.apk
         git add snesjs.apk
-        git commit -m "Auto-build: Update snesjs.apk [skip ci]" || echo "No changes"
+        git commit -m "Auto-build: Fix file chooser and viewport [skip ci]" || echo "No changes"
         git push
